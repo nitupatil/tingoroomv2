@@ -300,6 +300,9 @@ button { -webkit-tap-highlight-color: transparent; }
   box-shadow: 0 0 0 7px rgba(14, 165, 233, .18), 0 8px 18px rgba(14, 165, 233, .30);
 }
 
+/* Nearby posts list removed for cleaner UI */
+.info-panel { display: none !important; }
+
 /* Reusable button.html iframe loader. Existing button.html is the single source for nav. */
 #bottomNavHost { display: none; }
 .bottom-nav-frame {
@@ -372,15 +375,6 @@ button { -webkit-tap-highlight-color: transparent; }
 
   <div id="map"></div>
 
-  <div class="info-panel">
-    <div class="panel-head">
-      <div class="panel-title">Nearby posts on map</div>
-      <div class="panel-count" id="postCount">Loading...</div>
-    </div>
-    <div class="map-list" id="mapList">
-      <div class="empty-state">Loading map posts...</div>
-    </div>
-  </div>
 
   <div id="bottomNavHost"></div>
   <iframe
@@ -403,6 +397,125 @@ let allPosts = [];
 let markers = [];
 let activeMode = "all";
 let userMarker = null;
+let userLocation = null;
+
+function getStoredUser() {
+  return safeJson(localStorage.getItem("user"));
+}
+
+function getDeviceName() {
+  const ua = navigator.userAgent || "";
+  let browser = "Browser";
+  if (/Edg\//.test(ua)) browser = "Edge";
+  else if (/Chrome\//.test(ua)) browser = "Chrome";
+  else if (/Firefox\//.test(ua)) browser = "Firefox";
+  else if (/Safari\//.test(ua)) browser = "Safari";
+
+  let device = "Desktop";
+  if (/Android/i.test(ua)) device = "Android";
+  else if (/iPhone/i.test(ua)) device = "iPhone";
+  else if (/iPad/i.test(ua)) device = "iPad";
+  else if (/Windows/i.test(ua)) device = "Windows";
+  else if (/Macintosh|Mac OS/i.test(ua)) device = "Mac";
+
+  return `${browser} on ${device}`;
+}
+
+function getLocationCacheKey() {
+  const user = getStoredUser();
+  return `tingo_logged_device_location_${user && user.id ? user.id : "guest"}`;
+}
+
+function saveLoggedDeviceLocation(lat, lng, accuracy) {
+  if (!isValidCoord(lat, lng)) return;
+
+  const user = getStoredUser();
+  const payload = {
+    lat: Number(lat),
+    lng: Number(lng),
+    accuracy: Number(accuracy || 0),
+    user_id: user && user.id ? user.id : null,
+    device_name: user && user.active_device_name ? user.active_device_name : getDeviceName(),
+    updated_at: new Date().toISOString()
+  };
+
+  try {
+    localStorage.setItem(getLocationCacheKey(), JSON.stringify(payload));
+  } catch (e) {}
+}
+
+function getCachedLoggedDeviceLocation() {
+  const cached = safeJson(localStorage.getItem(getLocationCacheKey()));
+  if (!cached || !isValidCoord(cached.lat, cached.lng)) return null;
+  return cached;
+}
+
+function setLoggedDeviceMarker(lat, lng, options = {}) {
+  if (!map || !isValidCoord(lat, lng)) return;
+
+  userLocation = {
+    lat: Number(lat),
+    lng: Number(lng),
+    accuracy: Number(options.accuracy || 0)
+  };
+
+  const user = getStoredUser();
+  const deviceName = (user && user.active_device_name) || options.deviceName || getDeviceName();
+  const accuracyText = userLocation.accuracy ? `<br><span style="color:#64748B;font-size:11px;font-weight:700;">Accuracy: about ${Math.round(userLocation.accuracy)} m</span>` : "";
+  const sourceText = options.fromCache ? "Last saved device location" : "Current logged-in device location";
+
+  if (userMarker) map.removeLayer(userMarker);
+  userMarker = L.marker([userLocation.lat, userLocation.lng], { icon: makeUserIcon() })
+    .addTo(map)
+    .bindPopup(`<b>${sourceText}</b><br><span style="color:#64748B;font-size:11px;font-weight:700;">${escapeHtml(deviceName)}</span>${accuracyText}`);
+
+  if (options.openPopup !== false) userMarker.openPopup();
+  if (options.pan !== false) map.setView([userLocation.lat, userLocation.lng], options.zoom || 15, { animate: true });
+}
+
+function loadCachedLoggedDeviceLocation() {
+  const cached = getCachedLoggedDeviceLocation();
+  if (!cached) return false;
+  setLoggedDeviceMarker(cached.lat, cached.lng, {
+    accuracy: cached.accuracy,
+    deviceName: cached.device_name,
+    fromCache: true,
+    pan: true,
+    openPopup: false,
+    zoom: 15
+  });
+  return true;
+}
+
+function requestLoggedDeviceLocation(options = {}) {
+  const silent = options.silent === true;
+
+  if (!navigator.geolocation) {
+    if (!silent) alert("Location is not supported by this browser.");
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(pos => {
+    const deviceLat = pos.coords.latitude;
+    const deviceLng = pos.coords.longitude;
+    const accuracy = pos.coords.accuracy;
+
+    saveLoggedDeviceLocation(deviceLat, deviceLng, accuracy);
+    setLoggedDeviceMarker(deviceLat, deviceLng, {
+      accuracy,
+      fromCache: false,
+      pan: options.pan !== false,
+      openPopup: options.openPopup !== false,
+      zoom: options.zoom || 15
+    });
+  }, () => {
+    if (!silent) alert("Unable to get this device location. Please allow location permission and turn on GPS/location services.");
+  }, {
+    enableHighAccuracy: true,
+    timeout: 18000,
+    maximumAge: 0
+  });
+}
 
 function safeJson(value, fallback = null) {
   try { return JSON.parse(value || "null") || fallback; }
@@ -525,16 +638,20 @@ function renderMap() {
     bounds.push([lat, lng]);
   });
 
-  if (bounds.length) {
-    map.fitBounds(bounds, { paddingTopLeft: [24, 130], paddingBottomRight: [24, 210], maxZoom: 14 });
+  // Do not move away from the logged-in device location.
+  // If device location is unavailable, then fit all post markers as fallback.
+  if (bounds.length && !userLocation) {
+    map.fitBounds(bounds, { paddingTopLeft: [24, 130], paddingBottomRight: [24, 130], maxZoom: 14 });
   }
 
   renderList(posts);
 }
 
 function renderList(posts) {
+  // Nearby posts bottom list removed to keep the map UI clean.
   const list = document.getElementById("mapList");
   const count = document.getElementById("postCount");
+  if (!list || !count) return;
   count.innerText = `${posts.length} found`;
 
   if (!posts.length) {
@@ -600,25 +717,7 @@ function setMode(mode) {
 }
 
 function useMyLocation() {
-  if (!navigator.geolocation) {
-    alert("Location is not supported by this browser.");
-    return;
-  }
-
-  navigator.geolocation.getCurrentPosition(pos => {
-    const lat = pos.coords.latitude;
-    const lng = pos.coords.longitude;
-
-    if (userMarker) map.removeLayer(userMarker);
-    userMarker = L.marker([lat, lng], { icon: makeUserIcon() })
-      .addTo(map)
-      .bindPopup("Your location")
-      .openPopup();
-
-    map.setView([lat, lng], 15, { animate: true });
-  }, () => {
-    alert("Unable to get your location. Please allow location permission.");
-  }, { enableHighAccuracy: true, timeout: 10000 });
+  requestLoggedDeviceLocation({ silent: false, pan: true, openPopup: true, zoom: 16 });
 }
 
 function go(page) {
@@ -679,6 +778,11 @@ function updateReusableButtonsFrame() {
 window.addEventListener("load", () => {
   initMap();
   updateReusableButtonsFrame();
+
+  // First show the last saved logged-in device location, then refresh with live GPS.
+  loadCachedLoggedDeviceLocation();
+  requestLoggedDeviceLocation({ silent: true, pan: true, openPopup: false, zoom: 15 });
+
   loadMapPosts();
 });
 

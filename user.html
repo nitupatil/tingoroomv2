@@ -311,108 +311,48 @@ button:active {
   color: var(--text-main);
 }
 
-/* BOTTOM NAV */
-@media (max-width: 899px) {
-  .bottom-nav {
-    position: fixed;
-    bottom: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 100%;
-    max-width: 480px;
-    background: rgba(255, 255, 255, 0.9);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    display: flex;
-    justify-content: space-around;
-    padding: 12px 10px 24px 10px; 
-    box-shadow: 0 -10px 25px rgba(0,0,0,0.04);
-    border-top: 1px solid rgba(0,0,0,0.03);
-    z-index: 1000;
-  }
+
+/* REUSABLE BUTTON.HTML IFRAME LOADER
+   button.html stays as the single editable source for the bottom/right navigation. */
+#bottomNavHost {
+  display: none;
+}
+
+.bottom-nav-frame {
+  display: block;
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  z-index: 999999;
+  width: 100%;
+  max-width: 480px;
+  height: 112px;
+  border: 0;
+  background: transparent;
+  overflow: hidden;
+  pointer-events: auto;
 }
 
 @media (min-width: 900px) {
-  .bottom-nav {
-    position: fixed;
+  .bottom-nav-frame {
     top: 120px;
     right: 24px;
     bottom: 24px;
     left: auto;
     width: 96px;
     max-width: 96px;
-    padding: 16px 8px;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    align-items: center;
-    gap: 10px;
+    height: calc(100vh - 144px);
+    min-height: 360px;
+    transform: none;
     border-radius: 30px;
-    box-shadow: 0 20px 40px rgba(0,0,0,0.08);
-    background: rgba(255, 255, 255, 0.95);
-    border: 1px solid rgba(226, 232, 240, 0.7);
-    z-index: 1200;
   }
-
-  .nav-item { width: 100%; justify-content: center; padding: 10px 0; }
-  .nav-item .icon-wrapper { padding: 10px; }
-  .nav-item .material-symbols-rounded { font-size: 24px; }
-  .nav-item span { font-size: 10px; margin-top: 6px; }
-  .nav-item.post-btn { width: 100%; margin-top: 6px; }
 }
 
-.nav-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  color: #94A3B8;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  flex: 1;
-  transition: all 0.3s;
-  position: relative;
-}
-
-.nav-item.active {
-  color: var(--primary);
-}
-
-.nav-item .icon-wrapper {
-  position: relative;
-  padding: 4px 12px;
-  border-radius: 16px;
-  transition: all 0.3s;
-}
-
-.nav-item.active .icon-wrapper {
-  background: var(--primary-light);
-}
-
-.nav-item .material-symbols-rounded {
-  font-size: 26px;
-}
-
-.nav-item.post-btn .material-symbols-rounded {
-  background: var(--primary-gradient);
-  color: white;
-  padding: 12px;
-  border-radius: 50%;
-  margin-top: -30px; 
-  box-shadow: 0 8px 20px var(--primary-glow);
-  font-size: 28px;
-  border: 4px solid var(--bg);
-  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.nav-item.post-btn:active .material-symbols-rounded {
-  transform: scale(0.9);
-}
-
-.nav-item.post-btn span {
-  margin-top: 4px;
+@media (max-width: 374px) {
+  .bottom-nav-frame {
+    height: 108px;
+  }
 }
 </style>
 </head>
@@ -512,28 +452,16 @@ button:active {
 
   </div>
 
-  <div class="bottom-nav">
-    <div class="nav-item" onclick="go('index.html')">
-      <div class="icon-wrapper"><span class="material-symbols-rounded">home</span></div>
-      <span>Home</span>
-    </div>
-    <div class="nav-item" onclick="checkLoginNav('chat.html')">
-      <div class="icon-wrapper"><span class="material-symbols-rounded">chat_bubble</span></div>
-      <span>Chat</span>
-    </div>
-    <div class="nav-item post-btn" onclick="checkLoginNav('postroom.html')">
-      <span class="material-symbols-rounded">add</span>
-      <span>Post</span>
-    </div>
-    <div class="nav-item" onclick="go('map.html')">
-      <div class="icon-wrapper"><span class="material-symbols-rounded">map</span></div>
-      <span>Map</span>
-    </div>
-    <div class="nav-item active" onclick="go('user.html')">
-      <div class="icon-wrapper"><span class="material-symbols-rounded">person</span></div>
-      <span>Profile</span>
-    </div>
-  </div>
+  <!-- Reusable bottom navigation loaded from existing button.html -->
+  <div id="bottomNavHost"></div>
+  <iframe
+    id="bottomNavFrame"
+    class="bottom-nav-frame"
+    src="button.html?mode=mobile&active=user.html"
+    title="TingoRooms bottom navigation"
+    scrolling="no"
+    loading="eager"
+  ></iframe>
 
 </div>
 
@@ -542,6 +470,28 @@ const SUPABASE_URL = "https://slhbrakvprrxtqzodcyy.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNsaGJyYWt2cHJyeHRxem9kY3l5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU5Mzk4NzksImV4cCI6MjA5MTUxNTg3OX0.zygNCH4m_Zoz0ybgoyhlQKySHkV_uuFHAEhzqG5WRZ0"; 
 
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+
+/* ---------------- REUSABLE BUTTON.HTML SCRIPT ----------------
+   button.html is loaded through an iframe.
+   The iframe is narrow on desktop, so this page passes mode=desktop/mobile. */
+function updateReusableButtonsFrame() {
+  const frame = document.getElementById('bottomNavFrame');
+  if (!frame) return;
+
+  const mode = window.innerWidth >= 900 ? 'desktop' : 'mobile';
+  const desiredSrc = `button.html?mode=${mode}&active=user.html`;
+
+  if (frame.getAttribute('src') !== desiredSrc) {
+    frame.setAttribute('src', desiredSrc);
+  }
+}
+
+window.addEventListener('resize', () => {
+  clearTimeout(window.__tingoNavResizeTimer);
+  window.__tingoNavResizeTimer = setTimeout(updateReusableButtonsFrame, 120);
+});
+
 
 let currentEmail = "";
 let timerInterval;
@@ -773,6 +723,7 @@ async function createLatestLoginSession(user) {
 
 /* ---------------- INIT ---------------- */
 window.onload = async () => {
+  updateReusableButtonsFrame();
   const user = getStoredUser();
   if (user) {
     await validateCurrentSession({ silent: false });
