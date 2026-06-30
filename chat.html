@@ -266,6 +266,29 @@ body {
 .sent { background: var(--primary-gradient); color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
 .received { background: var(--surface); color: var(--text-main); align-self: flex-start; border-bottom-left-radius: 4px; }
 
+.date-separator {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 10px 0 14px;
+  position: relative;
+}
+.date-separator span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #64748B;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
 /* TYPING INDICATOR */
 .typing-indicator { display: flex; align-items: center; gap: 4px; height: 20px; }
 .typing-dot { width: 6px; height: 6px; background-color: #94A3B8; border-radius: 50%; animation: typing 1.4s infinite ease-in-out both; }
@@ -298,6 +321,25 @@ body {
   .bottom-nav-frame { top: 120px; right: 24px; bottom: 24px; left: auto; width: 96px; max-width: 96px; height: calc(100vh - 144px); min-height: 360px; transform: none; border-radius: 30px; }
 }
 @media (max-width: 374px) { .bottom-nav-frame { height: 108px; } }
+
+/* When a mobile conversation is open, show only the chat UI.
+   This prevents the reusable button.html iframe from overlaying the message input. */
+@media (max-width: 899px) {
+  .app-container.chat-active .bottom-nav-frame,
+  .app-container.chat-active #bottomNavHost {
+    display: none !important;
+    pointer-events: none !important;
+  }
+
+  .app-container.chat-active .main-chat {
+    height: 100%;
+  }
+
+  .app-container.chat-active .input-area {
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    z-index: 1002;
+  }
+}
 
 .hidden { display: none !important; }
 </style>
@@ -417,6 +459,10 @@ const requestedPostId = params.get("post_id") || params.get("post") || params.ge
 const requestedType = normalizePostType(
   params.get("post_type") || params.get("type") || params.get("listing_type") || ""
 );
+const requestedSource = String(params.get("source") || "").toLowerCase().trim();
+const initialDirectChatOpen = isValidId(chatUserId) || isValidId(requestedPostId);
+let currentChatOpenOrigin = initialDirectChatOpen ? (requestedSource || "direct_post") : "chatlist";
+let activeHistoryGuardReady = false;
 
 /* REUSABLE BUTTON.HTML SCRIPT */
 function updateReusableButtonsFrame() {
@@ -540,6 +586,32 @@ function formatTimeShort(dateStr) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function getDateKey(dateStr) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return "";
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function formatDateSeparator(dateStr) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return "";
+
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  const key = getDateKey(dateStr);
+  if (key === getDateKey(today)) return "Today";
+  if (key === getDateKey(yesterday)) return "Yesterday";
+
+  return d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 const DEFAULT_MALE = 'https://i.ibb.co/wZVNcCDt/maleavt.png';
 const DEFAULT_FEMALE = 'https://i.ibb.co/SXCj3b1q/femaleavt.png';
 
@@ -559,8 +631,14 @@ function getPostTableCandidates(forceType = "") {
   const type = normalizePostType(forceType || requestedType || "");
   const available = [{ table: "room_posts", kind: "available" }];
   const needed = [
+    { table: "room_requirements", kind: "needed" },
+    { table: "room_requirement", kind: "needed" },
     { table: "rooms_needed", kind: "needed" },
-    { table: "room_requirements", kind: "needed" }
+    { table: "room_needed", kind: "needed" },
+    { table: "room_needs", kind: "needed" },
+    { table: "needed_rooms", kind: "needed" },
+    { table: "requirement_posts", kind: "needed" },
+    { table: "requirements", kind: "needed" }
   ];
   if (type === "needed") return [...needed, ...available];
   if (type === "available") return [...available, ...needed];
@@ -771,6 +849,8 @@ function filterChats() {
 }
 
 function handleChatClick(userId, postId, postKind) {
+  currentChatOpenOrigin = "chatlist";
+  activeHistoryGuardReady = false;
   // Update URL silently so refresh maintains state
   const safePostId = isValidId(postId) ? encodeURIComponent(postId) : "";
   const typePart = postKind ? `&type=${encodeURIComponent(normalizePostType(postKind))}` : "";
@@ -788,6 +868,7 @@ async function openChat(userId, postIdToLoad, postTypeToLoad = "") {
 
   // Toggle UI Layout state for mobile logic
   appContainer.classList.add("chat-active");
+  setMobileActiveHistoryGuard();
   
   // Hide empty state, show main chat components
   emptyChatState.classList.add("hidden");
@@ -915,7 +996,15 @@ async function loadMessages(userId, postIdToLoad, postTypeToLoad = "", forceScro
   }
 
   let htmlString = "";
+  let lastDateKey = "";
   threadMessages.forEach(msg => {
+    const msgDateKey = getDateKey(msg.created_at);
+    if (msgDateKey && msgDateKey !== lastDateKey) {
+      const dateLabel = formatDateSeparator(msg.created_at);
+      htmlString += `<div class="date-separator"><span>${escapeHtml(dateLabel)}</span></div>`;
+      lastDateKey = msgDateKey;
+    }
+
     const isSent = msg.sender_id === currentUser.id;
     const timeStr = formatTimeShort(msg.created_at);
     const safeMsg = escapeHtml(msg.message || "").replace(/\n/g, '<br>');
@@ -1019,6 +1108,103 @@ async function sendMessage() {
 function handleKeyPress(e) { if (e.key === "Enter") sendMessage(); }
 
 /* ---------------- NAVIGATION ---------------- */
+function buildRoomDetailsBackUrl() {
+  const postId = currentPostId || requestedPostId;
+  if (!isValidId(postId)) return "index.html";
+
+  const type = normalizePostType(
+    currentPostType ||
+    (currentPostMeta && currentPostMeta.postKind) ||
+    requestedType ||
+    ""
+  );
+
+  const typePart = type ? `&type=${encodeURIComponent(type)}` : "";
+  return `roomdetails.html?id=${encodeURIComponent(postId)}${typePart}`;
+}
+
+function shouldReturnToRoomDetails() {
+  if (!isValidId(currentPostId || requestedPostId)) return false;
+  if (currentChatOpenOrigin === "chatlist") return false;
+  return true;
+}
+
+function cameFromRoomDetailsPage() {
+  if (currentChatOpenOrigin === "roomdetails") return true;
+
+  try {
+    if (!document.referrer) return false;
+    const refUrl = new URL(document.referrer, window.location.href);
+    const refPath = String(refUrl.pathname || "").toLowerCase();
+    if (!refPath.endsWith("roomdetails.html")) return false;
+
+    const refId = refUrl.searchParams.get("id") || refUrl.searchParams.get("room") || refUrl.searchParams.get("post_id") || refUrl.searchParams.get("requirement_id");
+    const postId = currentPostId || requestedPostId;
+    return !isValidId(refId) || !isValidId(postId) || String(refId) === String(postId);
+  } catch (err) {
+    return false;
+  }
+}
+
+function needsRoomDetailsHistoryBridge() {
+  if (window.innerWidth >= 900) return false;
+  if (!shouldReturnToRoomDetails()) return false;
+
+  /*
+    If chat was opened from roomdetails.html, do NOT add an extra history entry.
+    Browser/custom back should naturally return to that same details page, then the next back goes to index.
+
+    If chat was opened directly from index/dashboard, add one temporary chat state.
+    Pressing back first lands on that temporary state, then this page replaces it with roomdetails.html.
+    Result: index -> roomdetails, with no chat/details loop.
+  */
+  return !cameFromRoomDetailsPage();
+}
+
+function setMobileActiveHistoryGuard() {
+  if (activeHistoryGuardReady) return;
+  if (!needsRoomDetailsHistoryBridge()) return;
+
+  try {
+    window.history.replaceState({ tingoPage: "chat", tingoBridgeBase: true }, "", window.location.href);
+    window.history.pushState({ tingoPage: "chat", tingoBridgeActive: true }, "", window.location.href);
+    activeHistoryGuardReady = true;
+  } catch (err) {
+    console.warn("Unable to prepare chat back navigation:", err);
+  }
+}
+
+function closeActiveChatToList(updateUrl = true) {
+  appContainer.classList.remove("chat-active");
+  chatHeader.classList.add("hidden");
+  activeChatView.classList.add("hidden");
+  inputArea.classList.add("hidden");
+  inactiveBanner.classList.add("hidden");
+  emptyChatState.classList.remove("hidden");
+
+  currentChatUserId = null;
+  currentPostId = null;
+  currentPostType = null;
+  currentPostMeta = null;
+  chatUser = null;
+  cachedMessagesHTML = "";
+  isOtherUserTyping = false;
+  currentChatOpenOrigin = "chatlist";
+  activeHistoryGuardReady = false;
+
+  if (updateUrl) {
+    const newUrl = window.location.pathname;
+    window.history.pushState({ path: newUrl, tingoChatList: true }, "", newUrl);
+  }
+
+  if (chatChannel) {
+    db.removeChannel(chatChannel);
+    chatChannel = null;
+  }
+
+  renderChats(allChats);
+}
+
 function openRoom(id, postKind = "") {
   if (isValidId(id)) {
     const typePart = postKind ? `&type=${encodeURIComponent(normalizePostType(postKind))}` : "";
@@ -1027,20 +1213,34 @@ function openRoom(id, postKind = "") {
 }
 
 function goBack() {
-  // Mobile only logic: Returns to chat list
-  appContainer.classList.remove("chat-active");
-  currentChatUserId = null;
-  currentPostId = null;
-  
-  // Clean up URL without reload
-  const newUrl = window.location.pathname;
-  window.history.pushState({path: newUrl}, '', newUrl);
+  if (shouldReturnToRoomDetails()) {
+    if (cameFromRoomDetailsPage() && window.history.length > 1) {
+      window.history.back();
+      return;
+    }
 
-  if (chatChannel) db.removeChannel(chatChannel);
-  
-  // Re-render chat list to remove highlight
-  renderChats(allChats);
+    if (activeHistoryGuardReady && window.history.length > 1) {
+      window.history.back();
+      return;
+    }
+
+    window.location.replace(buildRoomDetailsBackUrl());
+    return;
+  }
+
+  closeActiveChatToList(true);
 }
+
+window.addEventListener("popstate", () => {
+  if (!appContainer.classList.contains("chat-active")) return;
+
+  if (shouldReturnToRoomDetails()) {
+    window.location.replace(buildRoomDetailsBackUrl());
+    return;
+  }
+
+  closeActiveChatToList(false);
+});
 </script>
 
 </body>
